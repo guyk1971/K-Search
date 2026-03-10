@@ -6,6 +6,47 @@ from pathlib import Path
 from typing import Any, List, Optional
 import json
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# NVIDIA Inference API backend configuration
+# ---------------------------------------------------------------------------
+INFERENCE_API_BASE_URL = "https://inference-api.nvidia.com"
+
+INFERENCE_MODEL_MAP = {
+    "gpt-5": "openai/openai/gpt-5",
+    "gpt-5.1": "openai/openai/gpt-5.1",
+    "gpt-5.2": "openai/openai/gpt-5.2",
+    "gpt-5.2-codex": "openai/openai/gpt-5.2-codex",
+    "o3": "openai/openai/o3",
+    "o3-mini": "openai/openai/o3-mini",
+    "o4-mini": "openai/openai/o4-mini",
+    "claude-sonnet-4-6": "aws/anthropic/bedrock-claude-sonnet-4-6",
+    "claude-sonnet-4-5": "aws/anthropic/bedrock-claude-sonnet-4-5-v1",
+    "claude-sonnet-4": "aws/anthropic/us.anthropic.claude-sonnet-4-v1",
+    "claude-opus-4-6": "aws/anthropic/bedrock-claude-opus-4-6",
+    "claude-opus-4-5": "aws/anthropic/claude-opus-4-5",
+    "claude-opus-4-1": "aws/anthropic/bedrock-claude-opus-4-1-v1",
+    "claude-haiku-4-5": "aws/anthropic/claude-haiku-4-5-v1",
+    "gemini-3.1-pro-preview": "gcp/google/gemini-3.1-pro-preview",
+}
+
+
+def _resolve_inference_model_path(model: str) -> str:
+    """Resolve a short model name to its NVIDIA Inference API provider path."""
+    if model in INFERENCE_MODEL_MAP:
+        return INFERENCE_MODEL_MAP[model]
+    if model.startswith("gpt") or model.startswith("o"):
+        return f"openai/openai/{model}"
+    if model.startswith("claude"):
+        return f"aws/anthropic/{model}"
+    if model.startswith("gemini"):
+        return f"gcp/google/{model}"
+    return model
+
+
 def _persist_ksearch_solution(
     solution: Any, *, definition_name: str, artifacts_dir: Optional[str]
 ) -> Optional[Path]:
@@ -90,6 +131,7 @@ def generate_and_evaluate(
     continue_from_solution: Optional[str] = None,
     continue_from_world_model: Optional[str] = None,
     num_eval_workload: Optional[int] = None,
+    api_model_name: Optional[str] = None,
     # W&B options
     enable_wandb: bool = False,
     wandb_project: Optional[str] = None,
@@ -172,6 +214,7 @@ def generate_and_evaluate(
             target_gpu=target_gpu,
             api_key=api_key,
             base_url=base_url,
+            api_model_name=api_model_name,
             artifacts_dir=artifacts_dir,
             wm_max_difficulty=wm_max_difficulty,
         )
@@ -185,6 +228,7 @@ def generate_and_evaluate(
             target_gpu=target_gpu,
             api_key=api_key,
             base_url=base_url,
+            api_model_name=api_model_name,
         )
 
     # Generate exactly one solution.
@@ -256,6 +300,12 @@ def main():
     parser.add_argument("--model-name", required=True, help="LLM model name (e.g., gpt-4.1, gpt-5, gemini-2.5-pro via compatible endpoint)")
     parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL for non-OpenAI providers (e.g. Gemini proxy)")
     parser.add_argument("--api-key", default=None, help="API key; if omitted, uses LLM_API_KEY env var")
+    parser.add_argument(
+        "--backend",
+        choices=["openai", "inference"],
+        default="openai",
+        help="LLM backend: 'openai' (default, direct OpenAI/Gemini) or 'inference' (NVIDIA Inference API proxy)",
+    )
     parser.add_argument("--language", default="triton", choices=["triton", "python", "cuda"], help="Target language for generated kernel")
     parser.add_argument("--target-gpu", default="H100", help="Target GPU architecture hint for prompts")
     parser.add_argument("--max-opt-rounds", type=int, default=5, help="Max optimization rounds for each solution generation")
@@ -333,9 +383,22 @@ def main():
 
     args = parser.parse_args()
 
-    api_key = args.api_key or os.getenv("LLM_API_KEY")
-    if not api_key:
-        raise ValueError("API key is required (pass --api-key or set LLM_API_KEY)")
+    if args.backend == "inference":
+        api_key = os.getenv("INFERENCE_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "INFERENCE_API_KEY is required for --backend inference "
+                "(set in .env or environment)"
+            )
+        base_url = INFERENCE_API_BASE_URL
+        api_model_name = _resolve_inference_model_path(args.model_name)
+        print(f"[inference backend] {args.model_name} -> {api_model_name}")
+    else:
+        api_key = args.api_key or os.getenv("LLM_API_KEY")
+        if not api_key:
+            raise ValueError("API key is required (pass --api-key or set LLM_API_KEY)")
+        base_url = args.base_url
+        api_model_name = None
 
     task_source = str(args.task_source or "flashinfer")
     task_path = str(args.task_path or (args.local or ""))
@@ -379,8 +442,9 @@ def main():
     generate_and_evaluate(
         task=task,
         model_name=args.model_name,
-        base_url=args.base_url,
+        base_url=base_url,
         api_key=api_key,
+        api_model_name=api_model_name,
         language=args.language,
         target_gpu=args.target_gpu,
         max_opt_rounds=args.max_opt_rounds,

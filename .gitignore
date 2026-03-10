@@ -4,3 +4,5 @@ logs/
 wandb/
 openevolve_output/
 *.log
+.env
+

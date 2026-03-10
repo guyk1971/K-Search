@@ -32,6 +32,7 @@
 - 🔌 **Multi-Model Support** — Works with any OpenAI-compatible API endpoint:
   - OpenAI: `gpt-5.2`, `o3`
   - Google: `gemini-3-pro-preview` (via compatible endpoint)
+  - [NVIDIA Inference API](https://inference-api.nvidia.com): unified proxy to GPT, Claude, and Gemini via `--backend inference`
   - Any model exposing a chat completions API
 
 - 💾 **Solution Persistence** — All generated solutions, evaluation reports, and world model snapshots are persisted to disk for resumption and analysis.
@@ -66,7 +67,7 @@ k_search/
 ### Prerequisites
 
 - NVIDIA GPU (H100/B200 recommended)
-- An API key for an OpenAI-compatible LLM provider
+- An API key for an OpenAI-compatible LLM provider, **or** an `INFERENCE_API_KEY` for the NVIDIA Inference API
 
 ### Installation
 
@@ -76,15 +77,26 @@ git clone https://github.com/caoshiyi/K-Search.git
 cd K-Search
 
 # Install dependencies
-uv pip install openai wandb
+uv pip install openai python-dotenv wandb
 uv pip install git+https://github.com/caoshiyi/flashinfer-bench-ksearch.git
 ```
 
 We provide ready-to-use launch scripts under `scripts/` for both tasks. Before running, open the script and set the following variables at the top:
 
 - `KSEARCH_ROOT` — Path to this repo
-- `API_KEY` — Your OpenAI-compatible API key
+- `API_KEY` — Your OpenAI-compatible API key (for default backend), **or** set `INFERENCE_API_KEY` in a `.env` file for the inference backend
 - `WANDB_API_KEY` — Your Weights & Biases API key
+
+#### Using the NVIDIA Inference API backend
+
+The Inference API provides unified access to GPT, Claude, and Gemini models through a single endpoint. To use it:
+
+1. Create a `.env` file in the project root with your key:
+   ```
+   INFERENCE_API_KEY=your-key-here
+   ```
+2. Set `BACKEND=inference` in the launch script (or pass `--backend inference` on the CLI).
+3. Use short model names (e.g., `gpt-5`, `claude-sonnet-4-6`, `gemini-3-pro`) — they are automatically resolved to the correct provider paths.
 
 ### GPUMode TriMul
 
@@ -99,10 +111,11 @@ Key variables you can customize (see the script header for the full list):
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `KSEARCH_ROOT` | Path to K-Search repo | — |
-| `API_KEY` | OpenAI-compatible API key | — |
+| `BACKEND` | `openai` or `inference` (NVIDIA Inference API) | `openai` |
+| `API_KEY` | OpenAI-compatible API key (backend=openai) | — |
 | `WANDB_API_KEY` | W&B API key | — |
 | `MODEL_NAME` | LLM model identifier | `gpt-5.2` |
-| `BASE_URL` | OpenAI-compatible API base URL | `https://us.api.openai.com/v1` |
+| `BASE_URL` | OpenAI-compatible API base URL (backend=openai) | `https://us.api.openai.com/v1` |
 | `LANGUAGE` | Target language (`triton`, `cuda`) | `triton` |
 | `MAX_OPT_ROUNDS` | Maximum optimization rounds | `300` |
 
@@ -128,10 +141,11 @@ Key variables you can customize (see the script header for the full list):
 |----------|-------------|---------|
 | `KSEARCH_ROOT` | Path to K-Search repo | — |
 | `DATASET_ROOT` | Path to downloaded `flashinfer-trace` dataset | — |
-| `API_KEY` | OpenAI-compatible API key | — |
+| `BACKEND` | `openai` or `inference` (NVIDIA Inference API) | `openai` |
+| `API_KEY` | OpenAI-compatible API key (backend=openai) | — |
 | `WANDB_API_KEY` | W&B API key | — |
 | `MODEL_NAME` | LLM model identifier | `gemini-3-pro-preview` |
-| `BASE_URL` | OpenAI-compatible API base URL | Gemini endpoint |
+| `BASE_URL` | OpenAI-compatible API base URL (backend=openai) | Gemini endpoint |
 | `DEFINITION` | Target kernel definition | `mla_paged_decode_h16_ckv512_kpe64_ps1` |
 | `LANGUAGE` | Target language (`triton`, `cuda`) | `cuda` |
 | `MAX_OPT_ROUNDS` | Maximum optimization rounds | `20` |
@@ -143,7 +157,8 @@ Key variables you can customize (see the script header for the full list):
 | `--task-source` | Task backend (`flashinfer` or `gpumode`) | `flashinfer` |
 | `--definition` | Target kernel definition name | — |
 | `--model-name` | LLM model identifier | *required* |
-| `--base-url` | OpenAI-compatible API base URL | OpenAI default |
+| `--backend` | LLM backend (`openai` or `inference`) | `openai` |
+| `--base-url` | OpenAI-compatible API base URL (ignored for `inference`) | OpenAI default |
 | `--language` | Target language (`triton`, `cuda`) | `triton` |
 | `--target-gpu` | Target GPU architecture hint | `H100` |
 | `--max-opt-rounds` | Maximum optimization rounds | `5` |

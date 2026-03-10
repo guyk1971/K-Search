@@ -261,7 +261,8 @@ class GpuModeTriMulTask:
         round_num: int | None = None,
     ) -> EvalResult:
         # Convert k-search Solution sources to the evaluator input format.
-        lang = str(getattr(solution.spec, "language", "") or "").strip().lower()
+        _lang_raw = getattr(solution.spec, "language", "") or ""
+        lang = str(_lang_raw.value if hasattr(_lang_raw, "value") else _lang_raw).strip().lower()
         entry_src = solution.get_entry_source()
         if lang == "cuda":
             sources_dict = {sf.path: sf.content for sf in (solution.sources or [])}

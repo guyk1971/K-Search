@@ -1,0 +1,33 @@
+[project]
+name = "k-search"
+version = "0.1.0"
+description = "LLM-Driven GPU Kernel Optimization with Co-Evolving Intrinsic World Model"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai",
+    "python-dotenv>=1.0.0",
+    "pyyaml",
+    "numpy",
+    "torch",
+    "wandb",
+    "ninja",  # required by torch.utils.cpp_extension for JIT CUDA/C++ (gpumode)
+]
+
+[project.optional-dependencies]
+flashinfer = [
+    "flashinfer-bench @ git+https://github.com/caoshiyi/flashinfer-bench-ksearch.git",
+]
+
+[project.scripts]
+k-search = "generate_kernels_and_eval:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["k_search"]

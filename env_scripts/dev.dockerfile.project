@@ -1,0 +1,8 @@
+FROM nvcr-pytorch:25.09-py3-claude-authenticated
+  USER root
+  RUN mkdir -p /home/gkoren/code/github/guyk1971/K-Search/env_scripts
+  RUN ln -sf code/github/guyk1971/K-Search/env_scripts/.cursor-server /home/gkoren/.cursor-server 2>/dev/null || true
+  USER gkoren
+  RUN pip install --no-cache-dir uv
+  WORKDIR /home/gkoren/code/github/guyk1971/K-Search/env_scripts/..
+  CMD ["/bin/bash", "-c", "eval $(dbus-launch --sh-syntax) && echo \"\" | gnome-keyring-daemon --unlock --components=secrets 2>/dev/null; export $(gnome-keyring-daemon --start --components=secrets 2>/dev/null); echo \"Running uv sync --frozen...\"; uv sync --frozen 2>&1 || true; source .venv/bin/activate 2>/dev/null || true; exec /bin/bash"]
