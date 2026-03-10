@@ -103,13 +103,13 @@ class WorldModelKernelGeneratorWithBaseline(KernelGenerator):
         def _llm_call(prompt: str) -> str:
             if self.model_name.startswith("gpt-5") or self.model_name.startswith("o3"):
                 response = self.client.responses.create(
-                    model=self.model_name,
+                    model=self._api_model_name,
                     input=prompt,
                     reasoning={"effort": self.reasoning_effort},
                 )
                 return (response.output_text or "").strip()
             response = self.client.chat.completions.create(
-                model=self.model_name, messages=[{"role": "user", "content": prompt}]
+                model=self._api_model_name, messages=[{"role": "user", "content": prompt}]
             )
             return (response.choices[0].message.content or "").strip()
 

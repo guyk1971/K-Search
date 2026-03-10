@@ -33,6 +33,7 @@ class KernelGenerator:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         reasoning_effort: str = "medium",  # only used for openai reasoning models
+        api_model_name: Optional[str] = None,
     ):
         """
         Args:
@@ -42,8 +43,11 @@ class KernelGenerator:
             api_key: API key (if None, uses LLM_API_KEY environment variable)
             base_url: Base URL for the API (need to provide for non-openai api models)
             reasoning_effort: Reasoning effort for OpenAI reasoning models ("low", "medium", "high", default: "medium")
+            api_model_name: Model name/path to use in API calls (e.g., "azure/openai/gpt-5"
+                for the NVIDIA Inference API). If None, uses model_name as-is.
         """
         self.model_name = model_name
+        self._api_model_name = api_model_name or model_name
         self.language = language
         self.target_gpu = target_gpu
         self.reasoning_effort = reasoning_effort
@@ -155,12 +159,12 @@ class KernelGenerator:
 
                 if self.model_name.startswith("gpt-5") or self.model_name.startswith("o3"):
                     response = self.client.responses.create(
-                        model=self.model_name, input=effective_prompt, reasoning={"effort": self.reasoning_effort}
+                        model=self._api_model_name, input=effective_prompt, reasoning={"effort": self.reasoning_effort}
                     )
                     generated_code = response.output_text.strip()
                 else:  # We use the completions api for OpenAI SDK compatible models
                     response = self.client.chat.completions.create(
-                        model=self.model_name, messages=[{"role": "user", "content": effective_prompt}]
+                        model=self._api_model_name, messages=[{"role": "user", "content": effective_prompt}]
                     )
                     generated_code = response.choices[0].message.content.strip()
 
