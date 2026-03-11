@@ -93,4 +93,16 @@ sudo -E env "PATH=$PATH" python3 -u "${KSEARCH_ROOT}/generate_kernels_and_eval.p
   --run-name "${RUN_NAME}" \
   --wandb-project "${WANDB_PROJECT}"
 
+# ── Remote evaluation via CudaGym ──
+# To run with remote GPU evaluation, set EVAL_BACKEND and CUDAGYM_URL:
+#
+# EVAL_BACKEND=cudagym
+# CUDAGYM_URL=http://your-cudagym-server:8000
+# # or for NVIDIA Astra:
+# # CUDAGYM_URL=https://atlas-cudagym-service-b200.stg.astra.nvidia.com
+#
+# Then add to the python3 command:
+#   --eval-backend ${EVAL_BACKEND} \
+#   --cudagym-url ${CUDAGYM_URL} \
+#   --remote-profile \
 
