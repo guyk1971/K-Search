@@ -22,10 +22,16 @@ from k_search.tasks.task_base import (
     load_ksearch_solution_json,
     solution_from_json_dict,
 )
-from k_search.tasks.gpu_mode.code_utils import normalize_cuda_sources
+from k_search.tasks.gpu_mode.code_utils import (
+    normalize_cuda_sources,
+    cuda_sources_to_submission_py,
+    normalize_triton_submission_py,
+)
 from k_search.tasks.gpu_mode.evaluator import evaluate_trimul_submission
 from k_search.tasks.gpu_mode.trimul.spec import TRIMUL_SPEC_TEXT_CUDA, TRIMUL_SPEC_TEXT_TRITON
 from k_search.tasks.gpu_mode import DEFAULT_TRIMUL_TASK_DIR
+from k_search.eval.remote_eval_package import RemoteEvalPackage
+from k_search.eval.drivers.gpumode_trimul_driver import build_gpumode_driver_source
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,8 @@ class GpuModeTriMulTask:
         task_dir: str | Path | None = None,
         artifacts_dir: str | None = None,
         name: str = "gpumode_trimul",
+        eval_backend: str = "local",
+        remote_evaluator: Any = None,
     ) -> None:
         self._name = str(name or "gpumode_trimul")
         self._cfg = GpuModeTriMulTaskConfig(
@@ -56,6 +64,8 @@ class GpuModeTriMulTask:
             task_dir=(Path(task_dir).expanduser().resolve() if task_dir is not None else DEFAULT_TRIMUL_TASK_DIR),
         )
         self._ksearch_artifacts_dir: str | None = (str(artifacts_dir) if artifacts_dir is not None else None)
+        self._eval_backend: str = str(eval_backend or "local")
+        self._remote_evaluator: Any = remote_evaluator
         self._solutions: dict[str, Solution] = {}
         # Last-round cache for prompt feedback (best-effort; generator reads via getattr).
         self._last_round_trace_logs_for_prompt: str = ""
@@ -252,6 +262,49 @@ class GpuModeTriMulTask:
         # For GPUMode we don't have dataset traces to seed from; just run a benchmark once.
         return self.run_benchmark(solution=base_solution, config=config, dump_traces=False, round_num=None)
 
+    def build_remote_eval_package(
+        self,
+        *,
+        solution: Solution,
+        config: Any = None,
+        round_num: int | None = None,
+    ) -> RemoteEvalPackage:
+        """Build a self-contained evaluation bundle for remote execution."""
+        import yaml
+
+        _lang_raw = getattr(solution.spec, "language", "") or ""
+        language = str(_lang_raw.value if hasattr(_lang_raw, "value") else _lang_raw).strip().lower()
+
+        # Build submission.py
+        if language == "cuda":
+            sources_dict = {sf.path: sf.content for sf in (solution.sources or [])}
+            normalized = normalize_cuda_sources(sources_dict)
+            submission_py = cuda_sources_to_submission_py(normalized)
+        else:
+            entry_src = solution.get_entry_source()
+            submission_py = normalize_triton_submission_py(entry_src.content if entry_src else "")
+
+        # Load test/benchmark specs from task.yml
+        task_yml_path = self._cfg.task_dir / "task.yml"
+        with open(task_yml_path, "r") as f:
+            task_cfg = yaml.safe_load(f)
+
+        test_specs = task_cfg.get("tests", [])
+        benchmark_specs = task_cfg.get("benchmarks", [])
+
+        driver_py = build_gpumode_driver_source(
+            test_specs=test_specs,
+            benchmark_specs=benchmark_specs,
+        )
+
+        return RemoteEvalPackage(
+            files={"submission.py": submission_py, "driver.py": driver_py},
+            run_command="python3 driver.py",
+            compile_command=None,
+            artifact_names=[],
+            language=language,
+        )
+
     def run_benchmark(
         self,
         *,
@@ -260,6 +313,11 @@ class GpuModeTriMulTask:
         dump_traces: bool = False,
         round_num: int | None = None,
     ) -> EvalResult:
+        # Remote dispatch: if eval_backend is "cudagym", build a package and evaluate remotely.
+        if self._eval_backend == "cudagym":
+            package = self.build_remote_eval_package(solution=solution, config=config, round_num=round_num)
+            return self._remote_evaluator.evaluate(package)
+
         # Convert k-search Solution sources to the evaluator input format.
         _lang_raw = getattr(solution.spec, "language", "") or ""
         lang = str(_lang_raw.value if hasattr(_lang_raw, "value") else _lang_raw).strip().lower()

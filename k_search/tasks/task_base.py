@@ -305,6 +305,16 @@ class Task(Protocol):
 
     def run_benchmark(self, *, solution: Solution, config: Any = None, dump_traces: bool = False, round_num: int | None = None) -> EvalResult: ...
 
+    def build_remote_eval_package(
+        self,
+        *,
+        solution: "Solution",
+        config: Any = None,
+        round_num: int | None = None,
+    ) -> Any:
+        """Build a self-contained evaluation bundle for remote execution."""
+        ...
+
     # World-model generators / prompt formatting.
     def code_for_world_model_from_raw(self, *, raw: Any, language: str) -> str: ...
 
