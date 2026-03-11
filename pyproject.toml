@@ -18,6 +18,9 @@ dependencies = [
 flashinfer = [
     "flashinfer-bench @ git+https://github.com/caoshiyi/flashinfer-bench-ksearch.git",
 ]
+cudagym = [
+    "cudagym>=0.8.0",
+]
 
 [project.scripts]
 k-search = "generate_kernels_and_eval:main"
