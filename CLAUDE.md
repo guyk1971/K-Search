@@ -47,6 +47,24 @@ python3 generate_kernels_and_eval.py \
   --artifacts-dir DIR                  # Output directory (default: .ksearch)
 ```
 
+### Remote Evaluation (CudaGym)
+
+K-Search can offload kernel compilation and benchmarking to a remote CudaGym server:
+
+```bash
+python3 generate_kernels_and_eval.py \
+  --task-source gpumode \
+  --model-name gpt-5 \
+  --eval-backend cudagym \
+  --cudagym-url http://your-server:8000 \
+  --remote-profile \
+  ...
+```
+
+Required: `cudagym` Python package (`pip install cudagym>=0.8.0`).
+
+The `--eval-backend cudagym` flag causes each task to build a self-contained evaluation bundle (kernel + driver + reference) that is sent to CudaGym for remote compilation, execution, and optional profiling. Results are returned as standard `EvalResult` objects — the generator loop is unaware of whether evaluation is local or remote.
+
 ### Dependencies
 
 Base deps include `ninja` (required by PyTorch for JIT C++/CUDA extensions in gpumode).
