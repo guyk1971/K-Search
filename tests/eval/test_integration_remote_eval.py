@@ -14,7 +14,10 @@ from k_search.tasks.gpu_mode_task import GpuModeTriMulTask
 
 
 def _mock_cudagym_success(latency_ms=1.5):
-    """Return a mock CudaGym async client whose execute() returns a successful result."""
+    """Return a mock CudaGym async client whose execute() returns a successful result.
+
+    Uses real CudaGym field names: successes/stdouts/stderrs (all plural).
+    """
     result_json = json.dumps({
         "status": "passed",
         "latency_ms": latency_ms,
@@ -24,13 +27,10 @@ def _mock_cudagym_success(latency_ms=1.5):
     })
     stdout = f"Loading...\n{_JSON_MARKER_START}\n{result_json}\n{_JSON_MARKER_END}\n"
 
-    # The RemoteEvaluator reads exec_resp via getattr:
-    #   getattr(exec_resp, "successes", [])  -> [True]
-    #   getattr(exec_resp, "stdout", "")     -> the full stdout string
     mock_exec = MagicMock()
     mock_exec.successes = [True]
-    mock_exec.stdout = stdout
-    mock_exec.stderr = ""
+    mock_exec.stdouts = [stdout]
+    mock_exec.stderrs = [""]
     mock_exec.exception = ""
 
     client = AsyncMock()

@@ -107,6 +107,65 @@ def _stop_patches(patches):
 
 
 # ---------------------------------------------------------------------------
+# Mock response factories matching real CudaGym API field names
+# ---------------------------------------------------------------------------
+
+def _exec_success(stdout_str: str):
+    """ExecutionResult: successes (plural), stdouts (plural), stderrs (plural)."""
+    return SimpleNamespace(
+        successes=[True],
+        stdouts=[stdout_str],
+        stderrs=[""],
+        exception="",
+    )
+
+
+def _exec_failure(stderr_str: str = "Segfault"):
+    return SimpleNamespace(
+        successes=[False],
+        stdouts=[""],
+        stderrs=[stderr_str],
+        exception="",
+    )
+
+
+def _compile_success(output_base64: dict | None = None):
+    """CompilationResult: success (singular), output_base64, details."""
+    return SimpleNamespace(
+        success=True,
+        output_base64=output_base64 or {},
+        details=[],
+        exception="",
+    )
+
+
+def _compile_failure(stderr_str: str = "error: undeclared identifier"):
+    return SimpleNamespace(
+        success=False,
+        output_base64={},
+        details=[SimpleNamespace(stderr=stderr_str, stdout="")],
+        exception="",
+    )
+
+
+def _profile_success(ncu=True, nsys=True):
+    """ProfilingResult with real field names."""
+    return SimpleNamespace(
+        ncu_success=ncu,
+        ncu_raw_logs="Speed of Light: 50%" if ncu else None,
+        ncu_json_data={"sm_occupancy": 0.5} if ncu else None,
+        ncu_cycles=1000 if ncu else None,
+        ncu_duration_us=100.0 if ncu else None,
+        nsys_success=nsys,
+        nsys_raw_logs="kernel summary" if nsys else None,
+        nsys_kernel_summary="kernel details" if nsys else None,
+        nsys_nvtx_summary=None,
+        nsys_api_summary=None,
+        exception="",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Triton tests (no compilation step)
 # ---------------------------------------------------------------------------
 
@@ -117,8 +176,9 @@ class TestRemoteEvaluatorTriton:
             "latency_ms": 1.23,
             "speedup_factor": 2.5,
         })
-        exec_resp = SimpleNamespace(successes=[True], stdout=stdout, stderr="")
-        client_cls, client_inst = _build_mock_client(exec_resp=exec_resp)
+        client_cls, client_inst = _build_mock_client(
+            exec_resp=_exec_success(stdout),
+        )
 
         patches = _patches(client_cls)
         _apply_patches(patches)
@@ -135,8 +195,9 @@ class TestRemoteEvaluatorTriton:
             _stop_patches(patches)
 
     def test_evaluate_triton_execution_failure(self):
-        exec_resp = SimpleNamespace(successes=[False], stdout="", stderr="Segfault")
-        client_cls, _ = _build_mock_client(exec_resp=exec_resp)
+        client_cls, _ = _build_mock_client(
+            exec_resp=_exec_failure("Segfault"),
+        )
 
         patches = _patches(client_cls)
         _apply_patches(patches)
@@ -156,16 +217,15 @@ class TestRemoteEvaluatorTriton:
 
 class TestRemoteEvaluatorCuda:
     def test_evaluate_cuda_success(self):
-        compile_resp = SimpleNamespace(success=True, binary_base64="AAAA==", stderr="")
         stdout = _make_stdout({
             "status": "passed",
             "latency_ms": 0.5,
             "reference_latency_ms": 1.0,
             "speedup_factor": 2.0,
         })
-        exec_resp = SimpleNamespace(successes=[True], stdout=stdout, stderr="")
         client_cls, client_inst = _build_mock_client(
-            compile_resp=compile_resp, exec_resp=exec_resp,
+            compile_resp=_compile_success({"main": "AAAA=="}),
+            exec_resp=_exec_success(stdout),
         )
 
         patches = _patches(client_cls)
@@ -182,10 +242,9 @@ class TestRemoteEvaluatorCuda:
             _stop_patches(patches)
 
     def test_evaluate_cuda_compile_failure(self):
-        compile_resp = SimpleNamespace(
-            success=False, binary_base64=None, stderr="error: undeclared identifier",
+        client_cls, client_inst = _build_mock_client(
+            compile_resp=_compile_failure("error: undeclared identifier"),
         )
-        client_cls, client_inst = _build_mock_client(compile_resp=compile_resp)
 
         patches = _patches(client_cls)
         _apply_patches(patches)
@@ -211,12 +270,9 @@ class TestRemoteEvaluatorProfiling:
             "latency_ms": 1.0,
             "speedup_factor": 1.5,
         })
-        exec_resp = SimpleNamespace(successes=[True], stdout=stdout, stderr="")
-        profile_resp = SimpleNamespace(
-            profiling={"kernel_time_ms": 0.8, "memory_bw_gb_s": 500.0},
-        )
         client_cls, client_inst = _build_mock_client(
-            exec_resp=exec_resp, profile_resp=profile_resp,
+            exec_resp=_exec_success(stdout),
+            profile_resp=_profile_success(ncu=True, nsys=True),
         )
 
         patches = _patches(client_cls)
@@ -227,8 +283,29 @@ class TestRemoteEvaluatorProfiling:
 
             assert result.is_passed()
             assert "profiling" in result.metrics
-            assert result.metrics["profiling"]["kernel_time_ms"] == 0.8
+            assert "ncu" in result.metrics["profiling"]
+            assert result.metrics["profiling"]["ncu"]["raw_logs"] == "Speed of Light: 50%"
+            assert result.metrics["profiling"]["ncu"]["metrics"]["sm_occupancy"] == 0.5
+            assert "nsys" in result.metrics["profiling"]
+            assert result.metrics["profiling"]["nsys"]["kernel_summary"] == "kernel details"
             client_inst.profile.assert_awaited_once()
+        finally:
+            _stop_patches(patches)
+
+    def test_profiling_skipped_on_failure(self):
+        """Profiling should not be attempted when execution fails."""
+        client_cls, client_inst = _build_mock_client(
+            exec_resp=_exec_failure("OOM"),
+        )
+
+        patches = _patches(client_cls)
+        _apply_patches(patches)
+        try:
+            evaluator = RemoteEvaluator("http://localhost:8080", enable_profiling=True)
+            result = evaluator.evaluate(_triton_package())
+
+            assert result.status == "runtime_error"
+            client_inst.profile.assert_not_awaited()
         finally:
             _stop_patches(patches)
 

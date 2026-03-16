@@ -79,13 +79,14 @@ class RemoteEvaluator:
 
         try:
             async with CudaGymClient(self.server_url) as client:
-                binary_base64: str | None = None
+                compile_resp = None
 
                 # --- Step 1: Compile (CUDA) --------------------------------
                 if package.compile_command is not None:
                     compile_req = CompilationRequest(
-                        files=package.files,
-                        compile_command=package.compile_command,
+                        job_name="ksearch_compile",
+                        file_contents=package.files,
+                        commands=[package.compile_command],
                         artifact_names=package.artifact_names,
                         return_base64=True,
                         timeout=self.compile_timeout,
@@ -93,58 +94,60 @@ class RemoteEvaluator:
                     compile_resp = await client.compile(compile_req)
 
                     if not compile_resp.success:
-                        stderr = getattr(compile_resp, "stderr", "") or ""
+                        stderr = _extract_compile_errors(compile_resp)
                         logger.info("Compilation failed: %s", stderr[:200])
                         return EvalResult(
                             status="compile_error",
                             log_excerpt=stderr,
                         )
 
-                    binary_base64 = getattr(compile_resp, "binary_base64", None)
-
                 # --- Step 2: Execute ----------------------------------------
-                exec_kwargs: dict[str, Any] = dict(
-                    files=package.files,
-                    run_command=package.run_command,
-                    env_type=package.cudagym_env_type,
+                exec_req = ExecutionRequest(
+                    job_name="ksearch_execute",
+                    command=package.run_command,
+                    file_contents=package.files,
+                    binary_base64=(
+                        compile_resp.output_base64 if compile_resp else {}
+                    ),
                     env_vars=package.env_vars,
-                    timeout=self.execute_timeout,
+                    n_runs=1,
+                    timeout_per_run=self.execute_timeout,
                 )
-                if binary_base64 is not None:
-                    exec_kwargs["binary_base64"] = binary_base64
-
-                exec_req = ExecutionRequest(**exec_kwargs)
                 exec_resp = await client.execute(exec_req)
 
-                successes = getattr(exec_resp, "successes", [])
-                if not successes or not successes[0]:
-                    stderr = getattr(exec_resp, "stderr", "") or ""
-                    logger.info("Execution failed: %s", stderr[:200])
+                if not exec_resp.successes or not exec_resp.successes[0]:
+                    stderr = exec_resp.stderrs[0] if exec_resp.stderrs else ""
+                    stdout = exec_resp.stdouts[0] if exec_resp.stdouts else ""
+                    log = (stderr or stdout or exec_resp.exception or
+                           "Execution failed with no output")
+                    logger.info("Execution failed: %s", log[:200])
                     return EvalResult(
                         status="runtime_error",
-                        log_excerpt=stderr,
+                        log_excerpt=log[:4000],
                     )
 
                 # --- Step 3: Parse output -----------------------------------
-                stdout = getattr(exec_resp, "stdout", "") or ""
+                stdout = exec_resp.stdouts[0] if exec_resp.stdouts else ""
                 result = parse_driver_output(stdout)
 
                 # --- Step 4: Profile (optional) -----------------------------
                 if self.enable_profiling and result.is_passed():
                     try:
                         profile_req = ProfilingRequest(
-                            files=package.files,
-                            run_command=package.run_command,
-                            env_type=package.cudagym_env_type,
+                            job_name="ksearch_profile",
+                            command=package.run_command,
+                            file_contents=package.files,
+                            binary_base64=(
+                                compile_resp.output_base64 if compile_resp else {}
+                            ),
                             env_vars=package.env_vars,
+                            enable_ncu=True,
+                            enable_nsys=True,
                             timeout=self.profile_timeout,
                         )
-                        if binary_base64 is not None:
-                            profile_req.binary_base64 = binary_base64
-
                         profile_resp = await client.profile(profile_req)
-                        profiling_data = getattr(profile_resp, "profiling", None)
-                        if profiling_data is not None:
+                        profiling_data = _extract_profiling_data(profile_resp)
+                        if profiling_data:
                             result.metrics["profiling"] = profiling_data
                     except Exception:
                         logger.warning("Profiling step failed; skipping.", exc_info=True)
@@ -165,3 +168,36 @@ class RemoteEvaluator:
                 status="runtime_error",
                 log_excerpt=f"RemoteEvaluator error: {exc}",
             )
+
+
+def _extract_compile_errors(compile_resp) -> str:
+    """Extract stderr/stdout from CompilationResult.details."""
+    parts = []
+    for detail in getattr(compile_resp, "details", []):
+        if getattr(detail, "stderr", ""):
+            parts.append(detail.stderr)
+        if getattr(detail, "stdout", ""):
+            parts.append(detail.stdout)
+    if parts:
+        return "\n".join(parts)[:4000]
+    return getattr(compile_resp, "exception", "") or "Unknown compile error"
+
+
+def _extract_profiling_data(profile_resp) -> dict | None:
+    """Extract NCU/nsys data from ProfilingResult into a flat dict."""
+    data = {}
+    if getattr(profile_resp, "ncu_success", False):
+        data["ncu"] = {
+            "raw_logs": getattr(profile_resp, "ncu_raw_logs", "") or "",
+            "metrics": getattr(profile_resp, "ncu_json_data", {}) or {},
+            "cycles": getattr(profile_resp, "ncu_cycles", None),
+            "duration_us": getattr(profile_resp, "ncu_duration_us", None),
+        }
+    if getattr(profile_resp, "nsys_success", False):
+        data["nsys"] = {
+            "raw_logs": getattr(profile_resp, "nsys_raw_logs", "") or "",
+            "kernel_summary": getattr(profile_resp, "nsys_kernel_summary", "") or "",
+            "nvtx_summary": getattr(profile_resp, "nsys_nvtx_summary", "") or "",
+            "api_summary": getattr(profile_resp, "nsys_api_summary", "") or "",
+        }
+    return data if data else None
