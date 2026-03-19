@@ -287,7 +287,7 @@ def main():
     parser.add_argument("--local", required=False, default=None, help="Path to flashinfer-trace dataset root (flashinfer only)")
     parser.add_argument(
         "--task-source",
-        choices=["flashinfer", "gpumode"],
+        choices=["flashinfer", "gpumode", "cudeepy"],
         default="flashinfer",
         help="Task backend to use.",
     )
@@ -381,6 +381,22 @@ def main():
     parser.add_argument("--gpumode-keep-tmp", action="store_true", help="Keep GPUMode temp working dir for debugging")
     parser.add_argument("--gpumode-task-dir", default=None, help="Override GPUMode task dir (defaults to vendored trimul task)")
 
+    # cudeepy options
+    parser.add_argument("--cudeepy-problem", default=None, help="Path to a cudeepy problem .py file (required for --task-source=cudeepy)")
+    parser.add_argument("--cudeepy-warmup", type=int, default=10, help="cudeepy benchmark warmup iterations (default: 10)")
+    parser.add_argument("--cudeepy-iters", type=int, default=50, help="cudeepy benchmark timed iterations (default: 50)")
+    parser.add_argument("--cudeepy-no-compile-ref", action="store_true", help="Skip torch.compile on cudeepy reference (use eager)")
+    parser.add_argument("--cudeepy-atol", type=float, default=None, help="Override cudeepy correctness atol")
+    parser.add_argument("--cudeepy-rtol", type=float, default=None, help="Override cudeepy correctness rtol")
+
+    # Remote evaluation backend
+    parser.add_argument("--eval-backend", choices=["local", "cudagym"], default="local",
+                        help="Evaluation backend: local GPU or remote CudaGym server (default: local)")
+    parser.add_argument("--cudagym-url", type=str, default=None,
+                        help="CudaGym server URL (default: CUDAGYM_URL env var)")
+    parser.add_argument("--remote-profile", action=argparse.BooleanOptionalAction, default=True,
+                        help="Enable profiling on remote evaluations (default: enabled)")
+
     args = parser.parse_args()
 
     if args.backend == "inference":
@@ -399,6 +415,18 @@ def main():
             raise ValueError("API key is required (pass --api-key or set LLM_API_KEY)")
         base_url = args.base_url
         api_model_name = None
+
+    # Build remote evaluator if requested
+    remote_evaluator = None
+    if args.eval_backend == "cudagym":
+        cudagym_url = args.cudagym_url or os.getenv("CUDAGYM_URL")
+        if not cudagym_url:
+            parser.error("--cudagym-url or CUDAGYM_URL env var required when --eval-backend=cudagym")
+        from k_search.eval.remote_evaluator import RemoteEvaluator
+        remote_evaluator = RemoteEvaluator(
+            server_url=cudagym_url,
+            enable_profiling=args.remote_profile,
+        )
 
     task_source = str(args.task_source or "flashinfer")
     task_path = str(args.task_path or (args.local or ""))
@@ -435,6 +463,24 @@ def main():
             mode=str(args.gpumode_mode or "benchmark"),
             keep_tmp=bool(args.gpumode_keep_tmp),
             task_dir=(str(args.gpumode_task_dir) if args.gpumode_task_dir else None),
+            artifacts_dir=args.artifacts_dir,
+            eval_backend=args.eval_backend,
+            remote_evaluator=remote_evaluator,
+        )
+    elif task_source == "cudeepy":
+        from k_search.tasks.cudeepy_task import CudeepyTask
+
+        if not args.cudeepy_problem:
+            raise ValueError("--cudeepy-problem is required for --task-source=cudeepy")
+
+        task = CudeepyTask(
+            problem_path=str(args.cudeepy_problem),
+            seed=42,
+            warmup=int(args.cudeepy_warmup),
+            iters=int(args.cudeepy_iters),
+            compile_ref=not args.cudeepy_no_compile_ref,
+            atol=args.cudeepy_atol,
+            rtol=args.cudeepy_rtol,
             artifacts_dir=args.artifacts_dir,
         )
     else:
