@@ -5,4 +5,5 @@ wandb/
 openevolve_output/
 *.log
 .env
+.DS_Store
 
